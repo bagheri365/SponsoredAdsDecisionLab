@@ -27,3 +27,14 @@ python -m sponsored_ads
 - Pricing, budgets, pacing, logging, and trained retrieval/ranking are future milestones.
 
 This module is a deterministic interface smoke test, not a production auction.
+
+## M03A: reproducible CTR development data
+
+See [M03A methodology](docs/milestones/M03A.md), [dataset card](docs/data/taobao-ad-x1.md), and [development split ADR](docs/decisions/ADR-001-development-split.md).
+
+```bash
+python -m sponsored_ads.ctr_features_cli --limit 10000 --sample-rate 0.2
+python -m sponsored_ads.ctr_features_cli --sample-rate 0.05
+```
+
+These commands read **only** `data/TaobaoAd_x1/train.csv`. Outputs under `artifacts/m03a/` are ignored by git. Published `test.csv` is reserved for later final evaluation. Source timestamps and point-in-time correctness are unverified.
