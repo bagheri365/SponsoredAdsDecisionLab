@@ -38,3 +38,7 @@ python -m sponsored_ads.ctr_features_cli --sample-rate 0.05
 ```
 
 These commands read **only** `data/TaobaoAd_x1/train.csv`. Outputs under `artifacts/m03a/` are ignored by git. Published `test.csv` is reserved for later final evaluation. Source timestamps and point-in-time correctness are unverified.
+
+## Milestone 3B: CTR model benchmarks
+
+See [`docs/milestones/M03B.md`](docs/milestones/M03B.md) for experimental design, reproducibility, and limitations. After M03A feature preparation, install `python -m pip install -e '.[dev,ml]'` and run `python -m sponsored_ads.ctr_train_cli`. Model outputs are written under ignored `artifacts/m03b/`. The published test split is not used for development.
