@@ -7,3 +7,5 @@ dist/
 build/
 data/
 artifacts/
+*.patch
+.DS_Store
