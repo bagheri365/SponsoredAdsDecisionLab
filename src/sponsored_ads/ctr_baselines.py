@@ -17,6 +17,7 @@ from sklearn.linear_model import SGDClassifier
 from sklearn.metrics import average_precision_score, log_loss, roc_auc_score, brier_score_loss
 
 from .ctr_features import STATIC_CATEGORICAL, NUMERIC, FEATURE_COLUMNS
+from .ctr_contract import encode_category, make_contract, save_contract
 
 INTENT = tuple(name for name in NUMERIC if name != 'price')
 STATIC = (*STATIC_CATEGORICAL, 'price')
@@ -139,9 +140,7 @@ def _matrix(path, features, *, category_maps=None):
             if name in STATIC_CATEGORICAL:
                 mapping = category_maps[name]
                 value = row[name]
-                if fitting and value not in mapping:
-                    mapping[value] = len(mapping)
-                values.append(mapping.get(value, -1))
+                values.append(encode_category(mapping, value, fit=fitting))
             else:
                 values.append(float(row[name]))
         columns.append(values)
@@ -152,7 +151,8 @@ def _matrix(path, features, *, category_maps=None):
             np.asarray(labels, dtype=np.int8), category_maps)
 
 
-def train_lightgbm(train_path, validation_path, *, features=FULL, seed=2026, n_estimators=250):
+def train_lightgbm(train_path, validation_path, *, features=FULL, seed=2026,
+                   n_estimators=250, return_contract=False):
     import lightgbm as lgb
     X_train, y_train, category_maps = _matrix(train_path, features)
     X_val, y_val, _ = _matrix(validation_path, features, category_maps=category_maps)
@@ -163,6 +163,7 @@ def train_lightgbm(train_path, validation_path, *, features=FULL, seed=2026, n_e
                                verbosity=-1)
     fit_kwargs = {'categorical_feature': categorical_indices,
                   'eval_metric': 'binary_logloss',
+                  'feature_name': list(features),
                   'callbacks': [lgb.early_stopping(25, verbose=False)]}
     # Support both older LightGBM releases and releases deprecating eval_set.
     if 'eval_X' in inspect.signature(model.fit).parameters:
@@ -171,10 +172,13 @@ def train_lightgbm(train_path, validation_path, *, features=FULL, seed=2026, n_e
         fit_kwargs['eval_set'] = [(X_val, y_val)]
     model.fit(X_train, y_train, **fit_kwargs)
     scores = model.predict_proba(X_val)[:, 1]
-    return model, {'algorithm': 'lightgbm', 'features': 'static_plus_intent' if features == FULL else 'static',
+    report = {'algorithm': 'lightgbm', 'features': 'static_plus_intent' if features == FULL else 'static',
                    'train_rows': int(len(y_train)), 'best_iteration': int(model.best_iteration_),
                    'category_encoding': 'train_fitted_contiguous; unknown=-1',
                    'metrics': _metrics(y_val, scores)}
+    if return_contract:
+        return model, report, make_contract(features, category_maps)
+    return model, report
 
 
 def run(input_dir, output_dir, *, seed=2026, n_estimators=250):
@@ -194,12 +198,13 @@ def run(input_dir, output_dir, *, seed=2026, n_estimators=250):
     lr, results['m0_logistic_static'] = train_logistic(train, val, seed=seed)
     joblib.dump(lr, output_dir / 'm0_logistic.joblib')
     for name, features in [('m1_lightgbm_static', STATIC), ('m2_lightgbm_intent', FULL)]:
-        model, results[name] = train_lightgbm(train, val, features=features,
-                                             seed=seed, n_estimators=n_estimators)
+        model, results[name], contract = train_lightgbm(
+            train, val, features=features, seed=seed,
+            n_estimators=n_estimators, return_contract=True)
         model.booster_.save_model(str(output_dir / f'{name}.txt'))
-        # Categorical encodings must be retained for future serving; this
-        # experiment currently trains them inside train_lightgbm, so serving
-        # remains unsupported until the preprocessing contract is persisted.
+        contract_path = output_dir / f'{name}.contract.json'
+        results[name]['contract_file'] = contract_path.name
+        results[name]['contract_sha256'] = save_contract(contract, contract_path)
     report = {
         'milestone': 'M03B', 'seed': seed, 'n_estimators': n_estimators,
         'input_manifest': str(manifest), 'input_manifest_sha256': hashlib.sha256(manifest.read_bytes()).hexdigest(),
