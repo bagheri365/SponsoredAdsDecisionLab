@@ -54,6 +54,8 @@ class ModelDecisionResponse:
     decision: DecisionResponse
     provenance: ModelProvenance
     scored_candidate_count: int
+    # Input order is retained, including ineligible candidates. No extra inference.
+    scored_candidates: tuple[AdCandidate, ...] = ()
 
 
 def load_model_auction_bundle(model_path, contract_path, artifact_path=None, *, method='raw'):
@@ -123,4 +125,4 @@ def decide_with_model(
     decision = decide(request, scored, ledger, policy=policy,
                       event_id=event_id, reservation_id=reservation_id,
                       reserve_cpc=reserve_cpc)
-    return ModelDecisionResponse(decision, bundle.provenance, len(scored))
+    return ModelDecisionResponse(decision, bundle.provenance, len(scored), scored)

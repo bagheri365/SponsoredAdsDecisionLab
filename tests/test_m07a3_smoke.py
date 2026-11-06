@@ -44,7 +44,6 @@ def test_report_determinism(tmp_path, monkeypatch):
     from sponsored_ads import model_auction_service
     mock_predict = lambda *a: [0.2, 0.1, 0.05]
     monkeypatch.setattr(model_auction_service, 'predict_calibrated', mock_predict)
-    monkeypatch.setattr(smoke, 'predict_calibrated', mock_predict)
     # Use actual auction/ledger, only mock inference to isolate the report contract.
     outputs = []
     for i in (1, 2):

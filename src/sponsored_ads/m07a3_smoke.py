@@ -11,7 +11,6 @@ from pathlib import Path
 from .budget_ledger import BudgetLedger
 from .model_auction_service import FeatureCandidate, decide_with_model, load_model_auction_bundle
 from .models import AdRequest
-from .m05fc_serving import predict_calibrated
 
 
 def _digest(data):
@@ -53,9 +52,6 @@ def run_smoke(*, model_path, contract_path, features_path, output_path,
         raise FileExistsError('Output exists or would overwrite an input')
     bundle = load_model_auction_bundle(model_path, contract_path, calibration_path, method=method)
     rows = sample_features(features_path, bundle.contract['features'], count)
-    predictions = predict_calibrated(bundle.model, bundle.contract, rows, bundle.calibration_artifact)
-    if len(predictions) != count:
-        raise ValueError('Unexpected prediction count')
     # Synthetic values: no inference of logged advertiser, bid, budget or eligibility.
     bids = (2.00, 1.50, 1.00)
     candidates = [FeatureCandidate(f'synthetic-ad-{i+1}', f'synthetic-adv-{i+1}',
@@ -66,6 +62,10 @@ def run_smoke(*, model_path, contract_path, features_path, output_path,
     result = decide_with_model(AdRequest('m07a3-smoke', 'synthetic-shopper'), candidates,
                                ledger, bundle, policy=policy, event_id='m07a3-reserve',
                                reservation_id='m07a3-reservation')
+    # M07B-1: reuse the exact batch scored by the auction service.
+    predictions = [candidate.predicted_ctr for candidate in result.scored_candidates]
+    if len(predictions) != count:
+        raise ValueError('Unexpected scored candidate count')
     report = {
         'schema_version': 1, 'experiment': 'M07A-3',
         'interpretation': 'Real persisted-model inference; synthetic bids, advertisers and budgets; no observed auction lift',
