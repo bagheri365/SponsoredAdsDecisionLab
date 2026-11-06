@@ -1,6 +1,6 @@
 # ADR-M07A-003: Persisted model-to-auction smoke experiment
 
-Status: Proposed (pending local execution and report review).
+Status: Accepted (locally verified).
 
 ## Decision
 
