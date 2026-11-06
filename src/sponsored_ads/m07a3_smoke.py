@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from .budget_ledger import BudgetLedger
+from .decision_replay import capture_replay_record, replay_decision
 from .model_auction_service import FeatureCandidate, decide_with_model, load_model_auction_bundle
 from .models import AdRequest
 
@@ -42,14 +43,21 @@ def sample_features(path, features, count):
 
 
 def run_smoke(*, model_path, contract_path, features_path, output_path,
-              calibration_path=None, method='raw', count=3, policy='score_second_price'):
+              calibration_path=None, method='raw', count=3, policy='score_second_price',
+              replay_output_path=None):
     """Produce a canonical report. No click settlement or real auction claims."""
     output = Path(output_path)
     inputs = [Path(model_path), Path(contract_path), Path(features_path)]
     if calibration_path is not None:
         inputs.append(Path(calibration_path))
-    if output.exists() or output.resolve() in {p.resolve() for p in inputs}:
+    replay_output = Path(replay_output_path) if replay_output_path is not None else None
+    protected = {p.resolve() for p in inputs}
+    if output.exists() or output.resolve() in protected:
         raise FileExistsError('Output exists or would overwrite an input')
+    if replay_output is not None and (replay_output.exists() or
+            replay_output.resolve() in protected or
+            replay_output.resolve() == output.resolve()):
+        raise FileExistsError('Replay output exists or would overwrite an input/report')
     bundle = load_model_auction_bundle(model_path, contract_path, calibration_path, method=method)
     rows = sample_features(features_path, bundle.contract['features'], count)
     # Synthetic values: no inference of logged advertiser, bid, budget or eligibility.
@@ -59,9 +67,20 @@ def run_smoke(*, model_path, contract_path, features_path, output_path,
                   for i, row in enumerate(rows)]
     budgets = {candidate.advertiser_id: 500 for candidate in candidates}
     ledger = BudgetLedger(budgets)
-    result = decide_with_model(AdRequest('m07a3-smoke', 'synthetic-shopper'), candidates,
+    request = AdRequest('m07a3-smoke', 'synthetic-shopper')
+    prior_events = ledger.events  # Capture before the serving decision mutates the ledger.
+    result = decide_with_model(request, candidates,
                                ledger, bundle, policy=policy, event_id='m07a3-reserve',
                                reservation_id='m07a3-reservation')
+    if replay_output is not None:
+        record = capture_replay_record(
+            request=request, scored_candidates=result.scored_candidates,
+            provenance=result.provenance, initial_budgets_cents=budgets,
+            prior_ledger_events=prior_events, policy=policy,
+            event_id='m07a3-reserve', reservation_id='m07a3-reservation',
+            reserve_cpc=0.0, decision=result.decision, final_ledger=ledger)
+        replay_decision(json.loads(json.dumps(record)),
+                        expected_provenance=result.provenance)
     # M07B-1: reuse the exact batch scored by the auction service.
     predictions = [candidate.predicted_ctr for candidate in result.scored_candidates]
     if len(predictions) != count:
@@ -81,6 +100,11 @@ def run_smoke(*, model_path, contract_path, features_path, output_path,
         'ledger_event_count': len(ledger.events),
     }
     report['report_sha256'] = _digest(report)
+    if replay_output is not None:
+        replay_output.parent.mkdir(parents=True, exist_ok=True)
+        with replay_output.open('x', encoding='utf-8') as stream:
+            json.dump(record, stream, indent=2, sort_keys=True, allow_nan=False)
+            stream.write('\n')
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open('x', encoding='utf-8') as stream:
         json.dump(report, stream, indent=2, sort_keys=True, allow_nan=False)
@@ -98,11 +122,14 @@ def main(argv=None):
     parser.add_argument('--policy', choices=('first_price', 'score_second_price'), default='score_second_price')
     parser.add_argument('--count', type=int, default=3)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--replay-output', default=None,
+                        help='Optional versioned scored-decision replay sidecar JSON')
     args = parser.parse_args(argv)
     report = run_smoke(model_path=args.model, contract_path=args.contract,
                        features_path=args.features, output_path=args.output,
                        calibration_path=args.calibrator, method=args.method,
-                       count=args.count, policy=args.policy)
+                       count=args.count, policy=args.policy,
+                       replay_output_path=args.replay_output)
     print(json.dumps({'output': args.output, 'report_sha256': report['report_sha256'],
                       'status': report['decision']['status']}, sort_keys=True))
 
